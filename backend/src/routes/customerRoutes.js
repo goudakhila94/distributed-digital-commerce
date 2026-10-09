@@ -1,123 +1,244 @@
 const express = require("express");
-const { getPool } = require("../config/mysql");
-const { requireAuth, allowRoles } = require("../middleware/auth");
+const { mysqlPool } = require("../config/mysql");
 
 const router = express.Router();
 
-// GET ALL CUSTOMERS
-router.get("/", requireAuth, allowRoles("admin", "staff"), async (req, res) => {
-  try {
-    const pool = getPool();
+/*
+    GET ALL CUSTOMERS
+    GET /api/customers
+*/
+router.get("/", async (req, res) => {
+    try {
+        const [customers] = await mysqlPool.query(
+            "SELECT * FROM customers ORDER BY id DESC"
+        );
 
-    const [customers] = await pool.query(`
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        address,
-        created_at
-      FROM customers
-      ORDER BY created_at DESC
-    `);
+        res.status(200).json({
+            success: true,
+            count: customers.length,
+            customers: customers
+        });
+    } catch (error) {
+        console.error("GET CUSTOMERS ERROR:");
+        console.error(error);
 
-    res.json({
-      success: true,
-      count: customers.length,
-      customers
-    });
-  } catch (error) {
-    console.error("GET CUSTOMERS ERROR:", error);
-
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch customers",
+            error: error.message
+        });
+    }
 });
 
-// CREATE CUSTOMER FROM WEBSITE
-router.post("/", requireAuth, allowRoles("admin", "staff"), async (req, res) => {
-  try {
-    const {
-      name,
-      email,
-      phone = "",
-      address = ""
-    } = req.body;
 
-    if (!name || !email) {
-      return res.status(400).json({
-        success: false,
-        message: "Customer name and email are required"
-      });
+/*
+    GET CUSTOMER BY ID
+    GET /api/customers/:id
+*/
+router.get("/:id", async (req, res) => {
+    try {
+        const [customers] = await mysqlPool.query(
+            "SELECT * FROM customers WHERE id = ?",
+            [req.params.id]
+        );
+
+        if (customers.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer not found"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            customer: customers[0]
+        });
+
+    } catch (error) {
+        console.error("GET CUSTOMER ERROR:");
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch customer",
+            error: error.message
+        });
     }
-
-    const pool = getPool();
-
-    const cleanName = String(name).trim();
-    const cleanEmail = String(email).trim().toLowerCase();
-    const cleanPhone = String(phone || "").trim();
-    const cleanAddress = String(address || "").trim();
-
-    // Prevent duplicate customers
-    const [existing] = await pool.query(
-      "SELECT id FROM customers WHERE email = ?",
-      [cleanEmail]
-    );
-
-    if (existing.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "A customer with this email already exists"
-      });
-    }
-
-    // SAVE CUSTOMER PERMANENTLY IN MYSQL
-    const [result] = await pool.query(
-      `
-      INSERT INTO customers
-      (name, email, phone, address)
-      VALUES (?, ?, ?, ?)
-      `,
-      [
-        cleanName,
-        cleanEmail,
-        cleanPhone,
-        cleanAddress
-      ]
-    );
-
-    // Return the newly created customer
-    const [rows] = await pool.query(
-      `
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        address,
-        created_at
-      FROM customers
-      WHERE id = ?
-      `,
-      [result.insertId]
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Customer created successfully",
-      customer: rows[0]
-    });
-
-  } catch (error) {
-    console.error("CREATE CUSTOMER ERROR:", error);
-
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
 });
+
+
+/*
+    CREATE CUSTOMER
+    POST /api/customers
+*/
+router.post("/", async (req, res) => {
+    try {
+        console.log("======================================");
+        console.log("CREATE CUSTOMER REQUEST");
+        console.log(req.body);
+        console.log("======================================");
+
+        const {
+            name,
+            email,
+            phone,
+            address
+        } = req.body;
+
+        if (!name || !email) {
+            return res.status(400).json({
+                success: false,
+                message: "name and email are required"
+            });
+        }
+
+        const [existingCustomers] = await mysqlPool.query(
+            "SELECT id FROM customers WHERE email = ?",
+            [email]
+        );
+
+        if (existingCustomers.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Customer with this email already exists"
+            });
+        }
+
+        const [result] = await mysqlPool.query(
+            `
+            INSERT INTO customers
+            (name, email, phone, address)
+            VALUES (?, ?, ?, ?)
+            `,
+            [
+                name,
+                email,
+                phone || null,
+                address || null
+            ]
+        );
+
+        const [newCustomer] = await mysqlPool.query(
+            "SELECT * FROM customers WHERE id = ?",
+            [result.insertId]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Customer created successfully",
+            customer: newCustomer[0]
+        });
+
+    } catch (error) {
+        console.error("CREATE CUSTOMER ERROR:");
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to create customer",
+            error: error.message
+        });
+    }
+});
+
+
+/*
+    UPDATE CUSTOMER
+    PUT /api/customers/:id
+*/
+router.put("/:id", async (req, res) => {
+    try {
+        const {
+            name,
+            email,
+            phone,
+            address
+        } = req.body;
+
+        const [result] = await mysqlPool.query(
+            `
+            UPDATE customers
+            SET
+                name = ?,
+                email = ?,
+                phone = ?,
+                address = ?
+            WHERE id = ?
+            `,
+            [
+                name,
+                email,
+                phone || null,
+                address || null,
+                req.params.id
+            ]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer not found"
+            });
+        }
+
+        const [updatedCustomer] = await mysqlPool.query(
+            "SELECT * FROM customers WHERE id = ?",
+            [req.params.id]
+        );
+
+        res.status(200).json({
+            success: true,
+            message: "Customer updated successfully",
+            customer: updatedCustomer[0]
+        });
+
+    } catch (error) {
+        console.error("UPDATE CUSTOMER ERROR:");
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to update customer",
+            error: error.message
+        });
+    }
+});
+
+
+/*
+    DELETE CUSTOMER
+    DELETE /api/customers/:id
+*/
+router.delete("/:id", async (req, res) => {
+    try {
+        const [result] = await mysqlPool.query(
+            "DELETE FROM customers WHERE id = ?",
+            [req.params.id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer not found"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Customer deleted successfully"
+        });
+
+    } catch (error) {
+        console.error("DELETE CUSTOMER ERROR:");
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete customer",
+            error: error.message
+        });
+    }
+});
+
 
 module.exports = router;
